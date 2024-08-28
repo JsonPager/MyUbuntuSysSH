@@ -188,7 +188,7 @@ while true; do
         else
             echo "请检查docker服务和docker网络"
         fi
-        ;;   
+        ;;
     7)
         echo "创建Reality容器"
         ;;
@@ -196,7 +196,18 @@ while true; do
         echo "创建3X-UI容器"
         ;;
     9)
-        echo "创建owncloud容器"
+        read -p "请输入owncloud域名(设置后将无法更改，仔细检查): " ocdns
+        if [[ $checkdockerandnet -eq 0 ]]; then
+            if [[ $dockernet == "4" ]]; then
+                docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
+            else
+                if [[ $dockernet == "6" ]]; then
+                    docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
+                fi
+            fi
+        else
+            echo "请检查docker服务和docker网络"
+        fi
         ;;
     10)
         curl -L https://raw.githubusercontent.com/JsonPager/docker/main/undocker.sh -o undocker.sh && chmod +x undocker.sh && ./undocker.sh
