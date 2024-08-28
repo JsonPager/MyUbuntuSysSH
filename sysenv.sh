@@ -49,7 +49,7 @@ function setswap() {
                     sed -i '/^vm.swappiness *=.*/d' /etc/sysctl.conf
 
                     # 在文件末尾添加新行
-                    echo "vm.swappiness = $setswapcount" >>/etc/sysctl.conf
+                    echo "vm.swappiness = 50" >>/etc/sysctl.conf
 
                     # 使配置立即生效
                     sysctl -p
