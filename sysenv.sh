@@ -26,7 +26,7 @@ function stopufw() {
 function setswap() {
     local currentswap=$(free -m | grep Swap | awk '{print $2}')
     if [ "$currentswap" -eq 0 ]; then
-        read -p "为设置交换内存,是否设置？(y/n): " issetswap
+        read -p "未设置交换内存,是否设置？(y/n): " issetswap
         if [[ $issetswap == "y" || $issetswap == "Y" ]]; then
             while true; do
                 read -p "输入设置交换内存大小(单位M): " setswapcount
