@@ -26,7 +26,7 @@ function stopufw() {
 function setswap() {
     local currentswap=$(free -m | grep Swap | awk '{print $2}')
     if [ "$currentswap" -eq 0 ]; then
-        read -p "未设置交换内存,是否设置？(y/n): " issetswap
+        read -p "为设置交换内存,是否设置？(y/n): " issetswap
         if [[ $issetswap == "y" || $issetswap == "Y" ]]; then
             while true; do
                 read -p "输入设置交换内存大小(单位M): " setswapcount
@@ -90,9 +90,9 @@ function check_network() {
     local network_exists=$(docker network ls -q --filter name=mynet 2>/dev/null)
 
     if [[ -z "$network_exists" ]]; then
-        echo 1
+        return 1
     else
-        echo 0
+        return 0
     fi
 }
 
@@ -100,7 +100,7 @@ function check_network() {
 dockernet = "4"
 function createdockernet() {
     # 验证docker
-    if ! [ $checkdocker -eq 0 ]; then
+    if ! [[ $checkdocker -eq 0 ]]; then
         echo "docker未安装或者无法启动"
         return 1
     fi
