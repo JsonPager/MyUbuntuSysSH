@@ -90,9 +90,9 @@ function check_network() {
     local network_exists=$(docker network ls -q --filter name=mynet 2>/dev/null)
 
     if [[ -z "$network_exists" ]]; then
-        return 1
+        echo 1
     else
-        return 0
+        echo 0
     fi
 }
 
@@ -105,7 +105,8 @@ function createdockernet() {
         return 1
     fi
     # 验证网络是否已经存在
-    if [[ $check_network -eq 0 ]]; then
+    local checknetresult=$(check_network)
+    if [[ $checknetresult -eq 0 ]]; then
         echo "已存在mynet网络"
         return 1
     fi
@@ -132,7 +133,8 @@ function checkdockerandnet() {
         return 1
     fi
     # 验证网络是否已经存在
-    if [[ $check_network -eq 1 ]]; then
+    local checknetresult=$(check_network)
+    if [[ $checknetresult -eq 1 ]]; then
         #echo "不存在mynet网络"
         return 1
     fi
