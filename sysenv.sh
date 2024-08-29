@@ -200,7 +200,7 @@ while true; do
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入需要卸载的容器名称: " uncontainername
             checkcontainerresult = $(testcontainer $uncontainername)
-            if [[ checkcontainerresult -eq 1 ]]; then
+            if [[ $checkcontainerresult -eq 1 ]]; then
                 echo "找到了需要卸载的容器了"
                 getCONTAINER_ID=$(docker ps -a --format "{{.ID}}" --filter "name=$uncontainername")
                 delvolumes=$(docker inspect --format='{{json .Mounts}}' "$getCONTAINER_ID")
