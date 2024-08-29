@@ -131,6 +131,15 @@ function checkdockerandnet() {
     return 0
 }
 
+# 验证容器存在情况（输入参数，容器名称）
+function testcontainer() {
+    if docker ps -a --filter "NAME=$1" | grep -q "$1"; then
+        return 1
+    else
+        return 0
+    fi
+}
+
 # 更新系统
 sudo apt update && sudo apt upgrade -y
 
@@ -145,9 +154,10 @@ while true; do
     echo "7. 创建Reality容器"
     echo "8. 创建3X-UI容器"
     echo "9. 创建owncloud容器"
-    echo "10. 卸载docker及相关容器、镜像、卷"
-    echo "11. 清理系统"
-    echo "12. 退出"
+    echo "10. 移除指定容器"
+    echo "11. 卸载docker及相关容器、镜像、卷"
+    echo "12. 清理系统"
+    echo "13. 退出"
     read -p "请输入您的选择: " choice
     case $choice in
     1)
@@ -179,20 +189,53 @@ while true; do
         echo "创建3X-UI容器"
         ;;
     9)
-        read -p "请输入owncloud域名(设置后将无法更改，仔细检查): " ocdns
         if [[ $checkdockerandnet -eq 0 ]]; then
+            read -p "请输入owncloud域名(设置后将无法更改，仔细检查): " ocdns
             docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
         else
             echo "请检查docker服务和docker网络"
         fi
         ;;
     10)
-        curl -L https://raw.githubusercontent.com/JsonPager/docker/main/undocker.sh -o undocker.sh && chmod +x undocker.sh && ./undocker.sh
+        if [[ $checkdockerandnet -eq 0 ]]; then
+            read -p "请输入需要卸载的容器名称: " uncontainername
+            local checkcontainerresult = testcontainer $uncontainername
+            if [[ checkcontainerresult -eq 1 ]]; then
+                echo "找到了需要卸载的容器了"
+                local getCONTAINER_ID=$(docker ps -a --format "{{.ID}}" --filter "name=$uncontainername")
+                local volumes=$(docker inspect --format='{{json .Mounts}}' "$getCONTAINER_ID")
+
+                # 停止容器
+                docker stop "$uncontainername"
+                # 删除容器
+                docker rm "$uncontainername"
+
+                # 如果有挂载卷，则提示用户是否删除
+                if [[ -n "$volumes" ]]; then
+                    read -p "容器 $uncontainername ($getCONTAINER_ID) 存在挂载卷，是否删除？(y/n): " delete_volume
+                    if [[ $delete_volume == "y" || $delete_volume == "Y" ]]; then
+                        # 获取卷名并删除
+                        for volume in $(echo "$volumes" | jq -r '.[].Source'); do
+                            echo "删除卷$volume"
+                            rm -rf "$volume"
+                        done
+                    fi
+                fi
+
+            else
+                echo "没有找到容器$uncontainername"
+            fi
+        else
+            echo "请检查docker服务和docker网络"
+        fi
         ;;
     11)
-        echo "清理系统"
+        curl -L https://raw.githubusercontent.com/JsonPager/docker/main/undocker.sh -o undocker.sh && chmod +x undocker.sh && ./undocker.sh
         ;;
     12)
+        echo "清理系统"
+        ;;
+    13)
         echo "退出"
         exit 1
         ;;
