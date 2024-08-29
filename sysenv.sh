@@ -177,22 +177,26 @@ while true; do
         ;;
     6)
         if [[ $checkdockerandnet -eq 0 ]]; then
-            docker run --privileged=true -itd --name=npm -p 80:80 -p 81:81 -p 443:443 --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt --restart=always jc21/nginx-proxy-manager:latest
+            docker run --privileged=true -itd --restart=always --name=npm --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -p 80:80 -p 81:81 -p 443:443 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt jc21/nginx-proxy-manager:latest
         else
             echo "请检查docker服务和docker网络"
         fi
         ;;
     7)
         if [[ $checkdockerandnet -eq 0 ]]; then
+            docker run --privileged=true -itd --restart=always --name=re --network=mynet --ip 192.168.0.4 --ip6 f602:fa3f:0:0::4 -p 45632:45632 selfpager/ur:latest
+            echo "安装完成,粘贴到v2ray中,修改配置后运行(建议修改ip为域名)"
+            echo "vless://8b3f95b3-dcdf-4a8e-9b16-b19f21bef55a@38.47.123.149:45632?encryption=none&flow=xtls-rprx-vision&security=reality&sni=hkchat.nothankyou.top&fp=chrome&pbk=iHso0D1dsnKzke8xJ5_3W1r9q0sy1NU4ZeJ14dTEbRY&sid=7777&spx=%2F&type=tcp&headerType=none#reality_hk"
+
         else
             echo "请检查docker服务和docker网络"
         fi
         ;;
     8)
         if [[ $checkdockerandnet -eq 0 ]]; then
-            docker run --restart=always --privileged=true -itd --network=mynet --ip 192.168.0.5 --ip6 f602:fa3f:0:0::5 --name 3xui -p 46440-46450:46440-46450/tcp -p 46440-46450:46440-46450/udp selfpager/3xui /usr/sbin/init
-            echo "安装完成,UI访问端口:46444,默认用户名admin,密码:lanlongning,可用代理端口46440-46450; "
-            echo "建议进入容器(docker exec -it 3xui bash),执行命令(x-ui)进行升级操作；提示data lost 选y,提示modify panel setting 选n"
+            docker run --privileged=true -itd --restart=always --name=3xui --network=mynet --ip 192.168.0.5 --ip6 f602:fa3f:0:0::5 -p 46440-46450:46440-46450/tcp -p 46440-46450:46440-46450/udp selfpager/3xui /usr/sbin/init
+            echo "安装完成,UI访问端口:46444,默认用户名admin,密码:lanlongning,可用代理端口46440-46450(tcp && udp); "
+            echo "建议进入容器(docker exec -it 3xui bash),执行命令(x-ui)进行升级操作;提示data lost 选y,提示modify panel setting 选n"
             echo "建议修改ui的访问路径,避免被端口扫描到,留下安全隐患"
         else
             echo "请检查docker服务和docker网络"
@@ -201,7 +205,7 @@ while true; do
     9)
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入owncloud域名(设置后将无法更改，仔细检查): " ocdns
-            docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
+            docker run --privileged=true -itd --restart=always --name=oc --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -p 8080:8080 -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -v /opt/dockerservice/oc:/mnt/data owncloud/server
         else
             echo "请检查docker服务和docker网络"
         fi
