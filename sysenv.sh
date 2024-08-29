@@ -185,9 +185,9 @@ while true; do
     7)
         if [[ $checkdockerandnet -eq 0 ]]; then
             docker run --privileged=true -itd --restart=always --name=re --network=mynet --ip 192.168.0.4 --ip6 f602:fa3f:0:0::4 -p 45632:45632 selfpager/ur:latest
-            echo "安装完成,粘贴到v2ray中,修改配置后运行(建议修改ip为域名)"
+            echo "安装完成,进入容器(docker exec -it re bash),修改配置文件(vim /usr/local/etc/xray/config.json),将两处域名修改为SNI代理域名;将xray服务添加自启动(systemctl enable xray),可能已经添加了,重启xray服务;完成退出"
+            echo "复制下面地址,粘贴到v2ray中,修改配置后运行(建议修改ip为域名)"
             echo "vless://8b3f95b3-dcdf-4a8e-9b16-b19f21bef55a@38.47.123.149:45632?encryption=none&flow=xtls-rprx-vision&security=reality&sni=hkchat.nothankyou.top&fp=chrome&pbk=iHso0D1dsnKzke8xJ5_3W1r9q0sy1NU4ZeJ14dTEbRY&sid=7777&spx=%2F&type=tcp&headerType=none#reality_hk"
-
         else
             echo "请检查docker服务和docker网络"
         fi
@@ -196,8 +196,8 @@ while true; do
         if [[ $checkdockerandnet -eq 0 ]]; then
             docker run --privileged=true -itd --restart=always --name=3xui --network=mynet --ip 192.168.0.5 --ip6 f602:fa3f:0:0::5 -p 46440-46450:46440-46450/tcp -p 46440-46450:46440-46450/udp selfpager/3xui /usr/sbin/init
             echo "安装完成,UI访问端口:46444,默认用户名admin,密码:lanlongning,可用代理端口46440-46450(tcp && udp); "
-            echo "建议进入容器(docker exec -it 3xui bash),执行命令(x-ui)进行升级操作;提示data lost 选y,提示modify panel setting 选n"
-            echo "建议修改ui的访问路径,避免被端口扫描到,留下安全隐患"
+            echo "进入容器(docker exec -it 3xui bash),执行命令(x-ui)进行升级操作;提示data lost 选y,提示modify panel setting 选n"
+            echo "修改ui的访问路径,避免被端口扫描到,留下安全隐患"
         else
             echo "请检查docker服务和docker网络"
         fi
