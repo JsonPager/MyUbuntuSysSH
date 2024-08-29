@@ -85,7 +85,7 @@ function checkdocker() {
     fi
 }
 
-# 检测mynet网络是否存在
+# 检测mynet网络是否存在（这个地方有点奇怪，调用的时候必须使用一个变量去承接这个返回值，要不判断有问题）
 function check_network() {
     local network_exists=$(docker network ls -q --filter name=mynet 2>/dev/null)
 
@@ -96,8 +96,7 @@ function check_network() {
     fi
 }
 
-# 创建docker网络
-dockernet = "4"
+# 创建docker网络（创建的带有ipv6的网络，在ipv4的服务器上测试过，服务器没有ipv4也能创建docker ipv6网络）
 function createdockernet() {
     # 验证docker
     if ! [[ $checkdocker -eq 0 ]]; then
@@ -111,18 +110,8 @@ function createdockernet() {
         return 1
     fi
 
-    while true; do
-        read -p "创建docker网络(ipv4输入4，ipv6输入6): " dockernet
-        if [[ $dockernet == "4" ]]; then
-            docker network create --driver bridge --subnet 192.168.0.0/24 --gateway 192.168.0.1 mynet
-            break
-        else
-            if [[ $dockernet == "6" ]]; then
-                docker network create --driver bridge --ipv6 --subnet f602:fa3f:0:0::/64 --subnet 192.168.0.0/24 --gateway 192.168.0.1 mynet
-                break
-            fi
-        fi
-    done
+    docker network create --driver bridge --ipv6 --subnet f602:fa3f:0:0::/64 --subnet 192.168.0.0/24 --gateway 192.168.0.1 mynet
+    echo "网络创建完成"
 }
 
 # 验证docker状态及网络创建情况，返回 0 可以继续
@@ -178,13 +167,7 @@ while true; do
         ;;
     6)
         if [[ $checkdockerandnet -eq 0 ]]; then
-            if [[ $dockernet == "4" ]]; then
-                docker run --privileged=true -itd --name=npm -p 80:80 -p 81:81 -p 443:443 --network=mynet --ip 192.168.0.2 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt --restart=always jc21/nginx-proxy-manager:latest
-            else
-                if [[ $dockernet == "6" ]]; then
-                    docker run --privileged=true -itd --name=npm -p 80:80 -p 81:81 -p 443:443 --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt --restart=always jc21/nginx-proxy-manager:latest
-                fi
-            fi
+            docker run --privileged=true -itd --name=npm -p 80:80 -p 81:81 -p 443:443 --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt --restart=always jc21/nginx-proxy-manager:latest
         else
             echo "请检查docker服务和docker网络"
         fi
@@ -198,13 +181,7 @@ while true; do
     9)
         read -p "请输入owncloud域名(设置后将无法更改，仔细检查): " ocdns
         if [[ $checkdockerandnet -eq 0 ]]; then
-            if [[ $dockernet == "4" ]]; then
-                docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
-            else
-                if [[ $dockernet == "6" ]]; then
-                    docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
-                fi
-            fi
+            docker run --restart=always --privileged=true -itd --name oc -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -p 8080:8080 --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -v /opt/dockerservice/oc:/mnt/data owncloud/server
         else
             echo "请检查docker服务和docker网络"
         fi
