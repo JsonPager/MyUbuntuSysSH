@@ -121,7 +121,7 @@ function checkdockerandnet() {
         # echo "docker未安装或者无法启动"
         return 1
     fi
-    # 验证网络是否已经存在
+    # 验证网络是否已经存在（这个地方有点奇怪，必须先赋值再判断）
     local checknetresult=$(check_network)
     if [[ $checknetresult -eq 1 ]]; then
         #echo "不存在mynet网络"
@@ -199,7 +199,8 @@ while true; do
     10)
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入需要卸载的容器名称: " uncontainername
-            checkcontainerresult = $(testcontainer $uncontainername)
+            # 赋值操作=号左右两边不能有空格
+            checkcontainerresult=$(testcontainer $uncontainername)
             if [[ $checkcontainerresult -eq 1 ]]; then
                 echo "找到了需要卸载的容器了"
                 getCONTAINER_ID=$(docker ps -a --format "{{.ID}}" --filter "name=$uncontainername")
