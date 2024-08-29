@@ -183,10 +183,20 @@ while true; do
         fi
         ;;
     7)
-        echo "创建Reality容器"
+        if [[ $checkdockerandnet -eq 0 ]]; then
+        else
+            echo "请检查docker服务和docker网络"
+        fi
         ;;
     8)
-        echo "创建3X-UI容器"
+        if [[ $checkdockerandnet -eq 0 ]]; then
+            docker run --restart=always --privileged=true -itd --network=mynet --ip 192.168.0.5 --ip6 f602:fa3f:0:0::5 --name 3xui -p 46440-46450:46440-46450/tcp -p 46440-46450:46440-46450/udp selfpager/3xui /usr/sbin/init
+            echo "安装完成,UI访问端口:46444,默认用户名admin,密码:lanlongning,可用代理端口46440-46450; "
+            echo "建议进入容器(docker exec -it 3xui bash),执行命令(x-ui)进行升级操作；提示data lost 选y,提示modify panel setting 选n"
+            echo "建议修改ui的访问路径,避免被端口扫描到,留下安全隐患"
+        else
+            echo "请检查docker服务和docker网络"
+        fi
         ;;
     9)
         if [[ $checkdockerandnet -eq 0 ]]; then
@@ -199,7 +209,7 @@ while true; do
     10)
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入需要卸载的容器名称: " uncontainername
-            checkcontainerresult="$(testcontainer $uncontainername)"         
+            checkcontainerresult="$(testcontainer $uncontainername)"
             if [[ "$checkcontainerresult" == "1" ]]; then
                 echo "找到了需要卸载的容器了"
                 getCONTAINER_ID=$(docker ps -a --format "{{.ID}}" --filter "name=$uncontainername")
