@@ -199,11 +199,11 @@ while true; do
     10)
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入需要卸载的容器名称: " uncontainername
-            local checkcontainerresult = testcontainer $uncontainername
+            checkcontainerresult = testcontainer $uncontainername
             if [[ checkcontainerresult -eq 1 ]]; then
                 echo "找到了需要卸载的容器了"
-                local getCONTAINER_ID=$(docker ps -a --format "{{.ID}}" --filter "name=$uncontainername")
-                local volumes=$(docker inspect --format='{{json .Mounts}}' "$getCONTAINER_ID")
+                getCONTAINER_ID=$(docker ps -a --format "{{.ID}}" --filter "name=$uncontainername")
+                delvolumes=$(docker inspect --format='{{json .Mounts}}' "$getCONTAINER_ID")
 
                 # 停止容器
                 docker stop "$uncontainername"
@@ -211,13 +211,13 @@ while true; do
                 docker rm "$uncontainername"
 
                 # 如果有挂载卷，则提示用户是否删除
-                if [[ -n "$volumes" ]]; then
-                    read -p "容器 $uncontainername ($getCONTAINER_ID) 存在挂载卷，是否删除？(y/n): " delete_volume
-                    if [[ $delete_volume == "y" || $delete_volume == "Y" ]]; then
+                if [[ -n "$delvolumes" ]]; then
+                    read -p "容器 $uncontainername ($getCONTAINER_ID) 存在挂载卷，是否删除？(y/n): " isdelete_volume
+                    if [[ $isdelete_volume == "y" || $isdelete_volume == "Y" ]]; then
                         # 获取卷名并删除
-                        for volume in $(echo "$volumes" | jq -r '.[].Source'); do
-                            echo "删除卷$volume"
-                            rm -rf "$volume"
+                        for delvolume in $(echo "$delvolumes" | jq -r '.[].Source'); do
+                            echo "删除卷$delvolume"
+                            rm -rf "$delvolume"
                         done
                     fi
                 fi
