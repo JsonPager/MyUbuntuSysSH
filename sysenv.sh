@@ -150,14 +150,15 @@ while true; do
     echo "3. 开启交换内存"
     echo "4. 安装docker"
     echo "5. 创建docker网络"
-    echo "6. 创建NPM容器"
-    echo "7. 创建Reality容器"
-    echo "8. 创建3X-UI容器"
-    echo "9. 创建owncloud容器"
-    echo "10. 移除指定容器"
-    echo "11. 卸载docker及相关容器、镜像、卷"
-    echo "12. 清理系统"
-    echo "13. 退出"
+    echo "6. 安装Portainer Docker管理工具"
+    echo "7. 创建NPM容器"
+    echo "8. 创建Reality容器"
+    echo "9. 创建3X-UI容器"
+    echo "10. 创建owncloud容器"
+    echo "11. 移除指定容器"
+    echo "12. 卸载docker及相关容器、镜像、卷"
+    echo "13. 清理系统"
+    echo "14. 退出"
     read -p "请输入您的选择: " choice
     case $choice in
     1)
@@ -177,12 +178,19 @@ while true; do
         ;;
     6)
         if [[ $checkdockerandnet -eq 0 ]]; then
-            docker run --privileged=true -itd --restart=always --name=npm --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -p 80:80 -p 81:81 -p 443:443 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt jc21/nginx-proxy-manager:latest
+            docker run --privileged=true -itd --restart=always --name=portainer --network=mynet --ip 192.168.0.6 --ip6 f602:fa3f:0:0::6 -p 9000:9000 -v /var/run/docker.sock:/var/run/docker.sock -v /opt/dockerservice/portainer_data:/data portainer/portainer-ce
         else
             echo "请检查docker服务和docker网络"
         fi
         ;;
     7)
+        if [[ $checkdockerandnet -eq 0 ]]; then
+            docker run --privileged=true -itd --restart=always --name=npm --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -p 80:80 -p 81:81 -p 443:443 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt jc21/nginx-proxy-manager:latest
+        else
+            echo "请检查docker服务和docker网络"
+        fi
+        ;;
+    8)
         if [[ $checkdockerandnet -eq 0 ]]; then
             docker run --privileged=true -itd --restart=always --name=re --network=mynet --ip 192.168.0.4 --ip6 f602:fa3f:0:0::4 -p 45632:45632 selfpager/ur:latest
             echo "安装完成,进入容器(docker exec -it re bash),修改配置文件(vim /usr/local/etc/xray/config.json),将两处域名修改为SNI代理域名;将xray服务添加自启动(systemctl enable xray),可能已经添加了,重启xray服务;完成退出"
@@ -192,7 +200,7 @@ while true; do
             echo "请检查docker服务和docker网络"
         fi
         ;;
-    8)
+    9)
         if [[ $checkdockerandnet -eq 0 ]]; then
             docker run --privileged=true -itd --restart=always --name=3xui --network=mynet --ip 192.168.0.5 --ip6 f602:fa3f:0:0::5 -p 46440-46450:46440-46450/tcp -p 46440-46450:46440-46450/udp selfpager/3xui /usr/sbin/init
             echo "安装完成,UI访问端口:46444,默认用户名admin,密码:lanlongning,可用代理端口46440-46450(tcp && udp); "
@@ -202,7 +210,7 @@ while true; do
             echo "请检查docker服务和docker网络"
         fi
         ;;
-    9)
+    10)
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入owncloud域名(设置后将无法更改，仔细检查): " ocdns
             docker run --privileged=true -itd --restart=always --name=oc --network=mynet --ip 192.168.0.3 --ip6 f602:fa3f:0:0::3 -p 8080:8080 -e OWNCLOUD_DOMAIN=192.168.0.3:8080 -e OWNCLOUD_TRUSTED_DOMAINS="$ocdns" -v /opt/dockerservice/oc:/mnt/data owncloud/server
@@ -210,7 +218,7 @@ while true; do
             echo "请检查docker服务和docker网络"
         fi
         ;;
-    10)
+    11)
         if [[ $checkdockerandnet -eq 0 ]]; then
             read -p "请输入需要卸载的容器名称: " uncontainername
             checkcontainerresult="$(testcontainer $uncontainername)"
@@ -224,18 +232,22 @@ while true; do
                 # 删除容器
                 docker rm "$uncontainername"
 
-                # 如果有挂载卷，则提示用户是否删除
-                if [[ -n "$delvolumes" ]]; then
-                    read -p "容器 $uncontainername ($getCONTAINER_ID) 存在挂载卷，是否删除？(y/n): " isdelete_volume
-                    if [[ $isdelete_volume == "y" || $isdelete_volume == "Y" ]]; then
-                        # 获取卷名并删除
-                        for delvolume in $(echo "$delvolumes" | jq -r '.[].Source'); do
-                            echo "删除卷$delvolume"
-                            rm -rf "$delvolume"
-                        done
+                # 如果是portainer 容器，那么不能删除卷docker的client socket的文件，会使docker 出问题的;仅能删除portainer_data
+                if [[ "$uncontainername" == "portainer" ]]; then
+                    rm -rf /opt/dockerservice/portainer_data
+                else
+                    # 如果有挂载卷，则提示用户是否删除
+                    if [[ -n "$delvolumes" ]]; then
+                        read -p "容器 $uncontainername ($getCONTAINER_ID) 存在挂载卷，是否删除？(y/n): " isdelete_volume
+                        if [[ $isdelete_volume == "y" || $isdelete_volume == "Y" ]]; then
+                            # 获取卷名并删除
+                            for delvolume in $(echo "$delvolumes" | jq -r '.[].Source'); do
+                                echo "删除卷$delvolume"
+                                rm -rf "$delvolume"
+                            done
+                        fi
                     fi
                 fi
-
             else
                 echo "没有找到容器$uncontainername"
             fi
@@ -243,13 +255,13 @@ while true; do
             echo "请检查docker服务和docker网络"
         fi
         ;;
-    11)
+    12)
         curl -L https://raw.githubusercontent.com/JsonPager/docker/main/undocker.sh -o undocker.sh && chmod +x undocker.sh && ./undocker.sh
         ;;
-    12)
+    13)
         echo "清理系统"
         ;;
-    13)
+    14)
         echo "退出"
         exit 1
         ;;
