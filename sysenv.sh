@@ -185,7 +185,7 @@ while true; do
         ;;
     7)
         if [[ $checkdockerandnet -eq 0 ]]; then
-            docker run --privileged=true -itd --restart=always --name=npm --network=mynet --ip 192.168.0.2 --ip6 f602:fa3f:0:0::2 -p 80:80 -p 81:81 -p 443:443 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt jc21/nginx-proxy-manager:latest
+            docker run --privileged=true -itd --restart=always --name=npm --network=host -p 80:80 -p 81:81 -p 443:443 -v /opt/dockerservice/npm/data:/data -v /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt jc21/nginx-proxy-manager:latest
         else
             echo "请检查docker服务和docker网络"
         fi
