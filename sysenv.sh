@@ -152,7 +152,7 @@ while true; do
     echo "5. 创建docker网络"
     echo "6. 安装Portainer Docker管理工具"
     echo "7. 创建NPM容器"
-    echo "8. 创建Reality容器"
+    echo "8. 创建Xray容器"
     echo "9. 创建3X-UI容器"
     echo "10. 创建owncloud容器"
     echo "11. 移除指定容器"
@@ -192,10 +192,8 @@ while true; do
         ;;
     8)
         if [[ $checkdockerandnet -eq 0 ]]; then
-            docker run --privileged=true -itd --restart=always --name=re --network=mynet --ip 192.168.0.4 --ip6 f602:fa3f:0:0::4 -p 45632:45632 selfpager/ur:latest
-            echo "安装完成,进入容器(docker exec -it re bash),修改配置文件(vim /usr/local/etc/xray/config.json),将两处域名修改为SNI代理域名;将xray服务添加自启动(systemctl enable xray),可能已经添加了,重启xray服务;完成退出"
-            echo "复制下面地址,粘贴到v2ray中,修改配置后运行(建议修改ip为域名)"
-            echo "vless://8b3f95b3-dcdf-4a8e-9b16-b19f21bef55a@38.47.123.149:45632?encryption=none&flow=xtls-rprx-vision&security=reality&sni=hkchat.nothankyou.top&fp=chrome&pbk=iHso0D1dsnKzke8xJ5_3W1r9q0sy1NU4ZeJ14dTEbRY&sid=7777&spx=%2F&type=tcp&headerType=none#reality_hk"
+            docker run --net host --restart always --privileged -i -t --name xray -v /opt/dockerservice/xray_conf/:/usr/local/etc/xray ghcr.io/xtls/xray-core:latest
+            echo "安装完成,进入/opt/dockerservice/xray_conf/,修改配置文件config.json,修改完成后重启"
         else
             echo "请检查docker服务和docker网络"
         fi
