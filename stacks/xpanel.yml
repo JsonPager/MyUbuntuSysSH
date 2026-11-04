@@ -1,0 +1,24 @@
+version: "3"
+services:
+    3x-ui:
+        networks:
+            mynet:
+                ipv6_address: f602:fa3f:0:0::15
+                ipv4_address: 192.168.0.15
+        container_name: 3xui
+        ports:
+            - 127.0.0.1:2053:2053
+            - 45660-45670:45660-45670
+        volumes:
+            - /opt/dockerservice/xui/db/:/etc/x-ui/
+            - /opt/dockerservice/xui/cert/:/root/cert/
+        environment:
+            - XRAY_VMESS_AEAD_FORCED=false
+            - XUI_ENABLE_FAIL2BAN=true
+        tty: true
+        restart: unless-stopped
+        image: ghcr.io/mhsanaei/3x-ui:latest
+networks:
+    mynet:
+        external: true
+        name: mynet

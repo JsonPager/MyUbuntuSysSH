@@ -1,0 +1,23 @@
+version: "3"
+
+services:
+  komari:
+    image: ghcr.io/komari-monitor/komari:latest
+    container_name: komari
+    restart: unless-stopped
+
+    networks:
+      mynet:
+        ipv4_address: 192.168.0.18
+        ipv6_address: f602:fa3f:0:0::18
+
+    ports:
+      - "127.0.0.1:35774:25774"
+
+    volumes:
+      - /opt/dockerservice/data:/app/data
+
+networks:
+  mynet:
+    external: true
+    name: mynet

@@ -1,0 +1,13 @@
+version: "3"
+services:
+    nginx-proxy-manager:
+        network_mode: host
+        privileged: true
+        stdin_open: true
+        tty: true
+        restart: always
+        container_name: npm
+        volumes:
+            - /opt/dockerservice/npm/data:/data
+            - /opt/dockerservice/npm/letsencrypt:/etc/letsencrypt
+        image: jc21/nginx-proxy-manager:latest

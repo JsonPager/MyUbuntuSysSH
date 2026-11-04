@@ -1,0 +1,26 @@
+version: "3"
+services:
+    pure-ftpd:
+        networks:
+            mynet:
+                ipv4_address: 192.168.0.31                
+        stdin_open: true
+        tty: true
+        privileged: true
+        restart: always
+        container_name: ftpd_server
+        ports:
+            - 21:21
+            - 30000-30009:30000-30009
+        environment:
+            - PUBLICHOST=192.192.192.192
+            - FTP_USER_NAME=admin
+            - FTP_USER_PASS=admin
+            - FTP_USER_HOME=/home/ftp
+        volumes:
+            - /opt/dockerservice/pure-ftpd:/home/ftp
+        image: stilliard/pure-ftpd
+networks:
+    mynet:
+        external: true
+        name: mynet

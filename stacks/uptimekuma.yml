@@ -1,0 +1,23 @@
+version: "3"
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    restart: unless-stopped
+
+    networks:
+      mynet:
+        ipv4_address: 192.168.0.19
+        ipv6_address: f602:fa3f:0:0::19
+
+    ports:
+      - "127.0.0.1:3001:3001"
+
+    volumes:
+      - /opt/dockerservice/uptime-kuma/data:/app/data
+
+networks:
+  mynet:
+    external: true
+    name: mynet

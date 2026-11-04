@@ -1,0 +1,21 @@
+version: "3"
+services:
+    memos:
+        stdin_open: true
+        tty: true
+        privileged: true
+        container_name: memos
+        restart: always
+        networks:
+            mynet:
+                ipv6_address: f602:fa3f:0:0::17
+                ipv4_address: 192.168.0.17
+        ports:
+            - "127.0.0.1:35230:5230"
+        volumes:
+            - /opt/dockerservice/memos:/var/opt/memos
+        image: neosmemo/memos:stable
+networks:
+    mynet:
+        external: true
+        name: mynet

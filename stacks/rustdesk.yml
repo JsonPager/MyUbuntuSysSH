@@ -1,0 +1,29 @@
+version: "3"
+services:
+    rustdesk-server-s6:
+        privileged: true
+        stdin_open: true
+        tty: true
+        container_name: rustdesk-server
+        networks:
+            mynet:
+                ipv6_address: f602:fa3f:0:0::22
+                ipv4_address: 192.168.0.22
+        ports:
+            - 21115:21115
+            - 21126:21116
+            - 21126:21116/udp
+            - 21127:21117
+            - 21118:21118
+            - 21119:21119
+        environment:
+            - RELAY=abc.com
+            - ENCRYPTED_ONLY=1
+        volumes:
+            - /opt/dockerservice/rustdesk/data:/data
+        restart: always
+        image: rustdesk/rustdesk-server-s6:latest
+networks:
+    mynet:
+        external: true
+        name: mynet

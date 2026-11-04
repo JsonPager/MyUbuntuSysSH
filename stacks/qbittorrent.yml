@@ -1,0 +1,23 @@
+version: "3"
+services:
+    qbittorrent:
+        network_mode: host
+        restart: always
+        privileged: true
+        stdin_open: true
+        tty: true
+        container_name: qbit
+        deploy:
+            resources:
+                limits:
+                    memory: 3g
+        environment:
+            - PUID=1000
+            - PGID=1000
+            - TZ=Etc/UTC
+            - WEBUI_PORT=7088
+            - TORRENTING_PORT=51858
+        volumes:
+            - /opt/dockerservice/qbittorrent/config:/config
+            - /home/zn/qbtdownload:/downloads
+        image: lscr.io/linuxserver/qbittorrent:latest

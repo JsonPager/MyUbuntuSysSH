@@ -1,0 +1,42 @@
+version: "3"
+
+services:
+
+  wordpress-a:
+    container_name: wordpress-a
+    restart: always
+
+    ports:
+      - 28080:80
+
+    environment:
+      - WORDPRESS_DB_HOST=mysql-a
+      - WORDPRESS_DB_NAME=wordpress
+      - WORDPRESS_DB_USER=wpuser
+      - WORDPRESS_DB_PASSWORD=wppass123
+
+    volumes:
+      - /opt/dockerservice/a/wordpress:/var/www/html
+
+    image: wordpress:7.0.2-php8.2-apache
+
+    command: >
+      bash -c "
+      docker-php-ext-install ftp &&
+      apache2-foreground
+      "
+
+  mysql-a:
+    container_name: wordpress-mysql-a
+    restart: always
+
+    environment:
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_USER=wpuser
+      - MYSQL_PASSWORD=wppass123
+      - MYSQL_ROOT_PASSWORD=rootpass123
+
+    volumes:
+      - /opt/dockerservice/a/mysql:/var/lib/mysql
+
+    image: mysql:8.0

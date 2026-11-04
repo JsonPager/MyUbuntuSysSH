@@ -1,0 +1,9 @@
+services:
+  ubuntu:
+    image: ubuntu:22.04
+    container_name: ubuntu-host
+    network_mode: host
+    restart: unless-stopped
+    command: ["bash", "-lc", "sleep infinity"]
+    tty: true
+    stdin_open: true
