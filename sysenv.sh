@@ -607,8 +607,7 @@ read -r -p "监控的公网网卡 [${default_iface:-请填写}]：" iface
 iface=${iface:-$default_iface}
 [[ $iface =~ ^[a-zA-Z0-9_.:-]{1,15}$ && $iface != lo && -d /sys/class/net/$iface ]] || die '网卡不存在或名称不合法。'
 read -r -p '每月关机阈值（GB，例如 900）：' threshold
-read -r -s -p 'Bark 完整地址（隐藏输入）：' bark
-printf '\n'
+read -r -p 'Bark 完整地址：' bark
 printf '首次安装：补充值填写本月已用但尚未被 vnStat 记录的流量；已有完整统计则填 0。\n'
 printf '重新配置：原补充值不会自动沿用，请重新填写；下个月自动不再计入。\n'
 read -r -p '当月未记录流量补充值（GB）[0]：' offset
