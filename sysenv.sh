@@ -519,6 +519,397 @@ iptables_ports_menu() {
     done
 }
 
+# ==================== 每月流量监控 ====================
+
+# 子 shell 隔离关机监控安装器的严格模式、锁、变量及回滚 trap。
+traffic_monitor() (
+# Ubuntu / Debian, systemd, vnStat 2.x. Upload this single file with LF endings.
+set +x
+set -Eeuo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C
+umask 077
+
+die() { printf '错误：%s\n' "$*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die '请使用 sudo bash sysenv.sh 执行。'
+command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || die '需要运行中的 systemd。'
+
+runner=/usr/local/lib/serverman/traffic_guard.py
+config=/etc/serverman-traffic/config.json
+if [[ ${1:-install} != install && ( ! -f $runner || ! -f $config ) ]]; then
+    die '尚未安装流量监控，请先选择“安装 / 修改流量阈值和 Bark 地址”。'
+fi
+case ${1:-install} in
+    status)
+        printf '定时器启用状态：'; systemctl is-enabled serverman-traffic.timer || true
+        printf '定时器运行状态：'; systemctl is-active serverman-traffic.timer || true
+        exec python3 "$runner" status ;;
+    test-bark) exec python3 "$runner" test-bark ;;
+    disable)
+        systemctl disable --now serverman-traffic.timer
+        systemctl stop serverman-traffic.service
+        printf '已停用流量关机监控；保留配置及 vnStat 历史数据。\n'
+        exit ;;
+    install) ;;
+    *) die '未知流量监控操作。' ;;
+esac
+
+[[ -t 0 && -t 1 ]] || die '安装需要交互式终端。'
+[[ -r /etc/os-release ]] || die '无法识别系统。'
+. /etc/os-release
+[[ $ID == ubuntu || $ID == debian ]] || die '目前支持 Ubuntu / Debian。'
+for tool in apt-get flock ip python3; do
+    command -v "$tool" >/dev/null || die "缺少命令：$tool"
+done
+
+work=$(mktemp -d /run/serverman-traffic-install.XXXXXXXX)
+backup= changed=0 committed=0 timer_active=0 timer_enabled=0 vnstat_active=0 vnstat_enabled=0
+files=(/etc/vnstat.conf "$runner" "$config"
+    /etc/systemd/system/vnstat.service.d/serverman-traffic.conf
+    /etc/systemd/system/serverman-traffic.service
+    /etc/systemd/system/serverman-traffic.timer)
+cleanup() {
+    local rc=$?
+    trap - EXIT INT TERM HUP
+    unset bark
+    if (( changed && ! committed )); then
+        printf '安装未完成，正在恢复本次修改前的配置。\n' >&2
+        systemctl stop serverman-traffic.timer serverman-traffic.service || true
+        for path in "${files[@]}"; do
+            if [[ -e $backup$path ]]; then
+                cp -a -- "$backup$path" "$path" || true
+            else
+                rm -f -- "$path"
+            fi
+        done
+        systemctl daemon-reload || true
+        if (( vnstat_active )); then systemctl restart vnstat.service || true
+        else systemctl stop vnstat.service || true; fi
+        if (( ! vnstat_enabled )); then systemctl disable vnstat.service || true; fi
+        if (( timer_enabled )); then systemctl enable serverman-traffic.timer || true
+        else systemctl disable serverman-traffic.timer || true; fi
+        if (( timer_active )); then systemctl start serverman-traffic.timer || true; fi
+        printf '备份目录：%s；请检查上面的恢复结果。\n' "$backup" >&2
+    fi
+    rm -rf -- "$work"
+    exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+printf '按 UTC 自然月统计指定网卡的 RX + TX；阈值单位 GB（1 GB = 1,000,000,000 字节）。\n'
+printf '达到阈值后尝试 Bark 通知并关机；通知失败也会继续关机。\n'
+ip -brief link
+default_iface=$(ip -o route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}')
+read -r -p "监控的公网网卡 [${default_iface:-请填写}]：" iface
+iface=${iface:-$default_iface}
+[[ $iface =~ ^[a-zA-Z0-9_.:-]{1,15}$ && $iface != lo && -d /sys/class/net/$iface ]] || die '网卡不存在或名称不合法。'
+read -r -p '每月关机阈值（GB，例如 900）：' threshold
+read -r -s -p 'Bark 完整地址（隐藏输入）：' bark
+printf '\n'
+printf '首次安装：补充值填写本月已用但尚未被 vnStat 记录的流量；已有完整统计则填 0。\n'
+printf '重新配置：原补充值不会自动沿用，请重新填写；下个月自动不再计入。\n'
+read -r -p '当月未记录流量补充值（GB）[0]：' offset
+offset=${offset:-0}
+# Secret is passed over stdin, never as a command-line argument or printed.
+printf '%s\n%s\n%s\n%s\n' "$iface" "$threshold" "$bark" "$offset" |
+    python3 -c '
+import datetime, decimal, json, re, sys, urllib.parse
+iface, threshold, url, offset = sys.stdin.read().splitlines()
+def amount(value, positive=False):
+    if not re.fullmatch(r"[0-9]{1,9}(\.[0-9]{1,9})?", value):
+        raise ValueError("流量必须是非负数字，最多 9 位整数和 9 位小数")
+    n = decimal.Decimal(value) * 1000000000
+    if positive and n <= 0:
+        raise ValueError("阈值必须大于 0")
+    return int(n)
+try:
+    p = urllib.parse.urlsplit(url)
+    if (p.scheme != "https" or not p.hostname or p.username or p.password
+            or p.query or p.fragment or not p.path.strip("/")
+            or any(c.isspace() or ord(c) < 32 for c in url)):
+        raise ValueError("Bark 地址须为 HTTPS 服务地址加设备 Key，不能含空白、查询参数或片段")
+    p.port
+    cfg = dict(interface=iface, threshold_bytes=amount(threshold, True),
+               bark_url=url.rstrip("/"), offset_bytes=amount(offset),
+               offset_month=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m"))
+except ValueError as e:
+    sys.exit(str(e) if not str(e).startswith("Port") else "Bark 端口不合法")
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    json.dump(cfg, f)
+' "$work/config.json"
+unset bark
+
+if ! command -v vnstat >/dev/null; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y vnstat
+fi
+vnstat --version | head -n 2
+vnstat --version | grep -Eq 'vnStat 2\.' || die '需要 vnStat 2.x。'
+systemctl cat vnstat.service >/dev/null || die '找不到 vnstat.service。'
+[[ -f /etc/vnstat.conf && ! -L /etc/vnstat.conf ]] || die '需要普通文件 /etc/vnstat.conf。'
+
+cat > "$work/traffic_guard.py" <<'PYTHON_RUNNER'
+#!/usr/bin/env python3
+"""Monthly vnStat quota guard. No credentials in arguments or logs."""
+import datetime as dt
+import decimal
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+CONFIG = Path('/etc/serverman-traffic/config.json')
+LOCK = Path('/run/serverman-traffic.lock')
+STATE = Path('/var/lib/serverman-traffic')
+VNSTAT_CONFIG = '/etc/vnstat.conf'
+UTC = dt.timezone.utc
+
+
+def run(args):
+    return subprocess.run(args, check=True, capture_output=True, text=True,
+                          timeout=8, env={**os.environ, 'TZ': 'UTC', 'LC_ALL': 'C'})
+
+
+def load_config():
+    cfg = json.loads(CONFIG.read_text(encoding='utf-8'))
+    if (not isinstance(cfg['threshold_bytes'], int) or cfg['threshold_bytes'] <= 0
+            or not isinstance(cfg['offset_bytes'], int) or cfg['offset_bytes'] < 0):
+        raise ValueError('invalid quota')
+    p = urllib.parse.urlsplit(cfg['bark_url'])
+    if p.scheme != 'https' or not p.hostname or not p.path.strip('/'):
+        raise ValueError('invalid Bark URL')
+    return cfg
+
+
+def usage(cfg, now):
+    result = json.loads(run(['vnstat', '--config', VNSTAT_CONFIG, '--json', 'm',
+                             '-i', cfg['interface']]).stdout)
+    # vnStat 1.x reports KiB; never accept it as a byte-based 2.x database.
+    if str(result['jsonversion']) != '2':
+        raise ValueError('unsupported vnStat JSON version')
+    interfaces = [i for i in result['interfaces'] if i['name'] == cfg['interface']]
+    if len(interfaces) != 1:
+        raise ValueError('monitored interface not found')
+    interface = interfaces[0]
+    updated = interface['updated']
+    stamp = (dt.datetime.fromtimestamp(updated['timestamp'], UTC)
+             if type(updated.get('timestamp')) is int
+             else dt.datetime(**updated['date'], **updated['time'], tzinfo=UTC))
+    if not -10 <= (now - stamp).total_seconds() <= 180:
+        raise ValueError('vnStat database is stale')
+    rows = [row for row in interface['traffic']['month']
+            if row['date']['year'] == now.year and row['date']['month'] == now.month]
+    if len(rows) != 1:
+        raise ValueError('current month is not available yet')
+    row = rows[0]
+    if any(type(row[k]) is not int or row[k] < 0 for k in ('rx', 'tx')):
+        raise ValueError('invalid traffic counters')
+    offset = cfg['offset_bytes'] if cfg['offset_month'] == now.strftime('%Y-%m') else 0
+    return row['rx'] + row['tx'] + offset
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Do not forward a device key to another endpoint.
+        return None
+
+
+def notify(cfg, title, body):
+    url = cfg['bark_url'].rstrip('/') + '/' + urllib.parse.quote(title, safe='')
+    url += '/' + urllib.parse.quote(body, safe='')
+    request = urllib.request.Request(url, headers={'User-Agent': 'ServerMan-Traffic/1'})
+    # Ignore proxy environment; keep the HTTPS request bounded, no retries.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    def deadline(signum, frame):
+        raise TimeoutError('notification deadline')
+    previous = signal.signal(signal.SIGALRM, deadline)
+    signal.alarm(6)
+    try:
+        with opener.open(request, timeout=5) as response:
+            payload = json.loads(response.read(65536))
+            if response.status != 200 or payload.get('code') != 200:
+                raise ValueError('Bark rejected notification')
+        return True
+    except Exception:
+        # urllib exceptions include the full URL (a secret), so never print them.
+        print('Bark 通知失败（地址已隐藏）。', file=sys.stderr, flush=True)
+        return False
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def gb(value):
+    return f'{decimal.Decimal(value) / 1000000000:.3f}'
+
+
+def main(command='check'):
+    cfg = load_config()
+    if command == 'test-bark':
+        return 0 if notify(cfg, '流量监控测试', 'Bark 连通性测试，不执行关机。') else 1
+    if command not in ('check', 'status'):
+        raise ValueError('invalid command')
+    with LOCK.open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('另一个安装或检测任务正在执行。', flush=True)
+            return 1
+        now = dt.datetime.now(UTC)
+        used = usage(cfg, now)
+        month = now.strftime('%Y-%m')
+        summary = (f'{month} UTC，网卡 {cfg["interface"]}，入站+出站 '
+                   f'{gb(used)} GB / 阈值 {gb(cfg["threshold_bytes"])} GB')
+        print(summary, flush=True)
+        if command == 'status' or used < cfg['threshold_bytes']:
+            return 0
+        print('达到阈值，尝试通知并请求关机。', flush=True)
+        # Notification and persistence failures must never suppress shutdown.
+        try:
+            STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+            marker = STATE / (month + '-notified')
+            if not marker.exists() and notify(cfg, '服务器流量达到阈值，即将关机',
+                                            socket.gethostname() + '\n' + summary):
+                marker.touch(mode=0o600)
+        except Exception:
+            print('通知状态记录失败，继续关机。', file=sys.stderr, flush=True)
+        run(['systemctl', '--no-block', 'poweroff'])
+        return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else 'check'))
+    except Exception:
+        # Config/command output can contain credentials: log a fixed message only.
+        print('流量检测失败：请检查配置、vnStat 服务及当前月份数据；未执行关机。',
+              file=sys.stderr, flush=True)
+        sys.exit(1)
+PYTHON_RUNNER
+
+# Serialise installation with checks. Taking this lock never runs the guard.
+exec 9>/run/serverman-traffic.lock
+flock -n 9 || die '另一个安装或检测任务正在运行，请稍后重试。'
+systemctl is-active --quiet serverman-traffic.timer && timer_active=1
+systemctl is-enabled --quiet serverman-traffic.timer 2>/dev/null && timer_enabled=1
+systemctl is-active --quiet vnstat.service && vnstat_active=1
+systemctl is-enabled --quiet vnstat.service 2>/dev/null && vnstat_enabled=1
+backup=$(mktemp -d /var/backups/serverman-traffic.XXXXXXXX)
+for path in "${files[@]}"; do
+    [[ ! -L $path ]] || die "管理文件是符号链接，停止安装：$path"
+    [[ ! -e $path || -f $path ]] || die "管理路径不是普通文件：$path"
+    if [[ -e $path ]]; then
+        mkdir -p -- "$backup$(dirname "$path")"
+        cp -a -- "$path" "$backup$path"
+    fi
+done
+changed=1
+if (( timer_active )); then systemctl stop serverman-traffic.timer; fi
+if systemctl is-active --quiet serverman-traffic.service; then
+    systemctl stop serverman-traffic.service
+fi
+install -d -m 700 /etc/serverman-traffic /var/lib/serverman-traffic
+install -d -m 755 /usr/local/lib/serverman /etc/systemd/system/vnstat.service.d
+install -m 600 "$work/config.json" "$config"
+install -m 700 "$work/traffic_guard.py" "$runner"
+python3 - /etc/vnstat.conf <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+values = dict(UpdateInterval=5, PollInterval=5, SaveInterval=1, MonthRotate=1)
+lines = [line for line in p.read_text().splitlines()
+         if not line.split() or line.split()[0] not in values]
+p.write_text('\n'.join(lines) + '\n\n# Managed by sysenv.sh traffic guard\n' +
+             ''.join(f'{k} {v}\n' for k, v in values.items()))
+PY
+cat > /etc/systemd/system/vnstat.service.d/serverman-traffic.conf <<'UNIT'
+[Service]
+Environment=TZ=UTC
+UNIT
+cat > /etc/systemd/system/serverman-traffic.service <<'UNIT'
+[Unit]
+Description=Monthly vnStat quota guard (Bark and poweroff)
+After=network.target vnstat.service
+Wants=vnstat.service
+
+[Service]
+Type=oneshot
+Environment=TZ=UTC
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/lib/serverman/traffic_guard.py check
+TimeoutStartSec=30
+# systemctl poweroff stops this service too; do not kill its own shutdown request.
+UNIT
+cat > /etc/systemd/system/serverman-traffic.timer <<'UNIT'
+[Unit]
+Description=Check monthly traffic every 10 seconds
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+RandomizedDelaySec=0
+Unit=serverman-traffic.service
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+# Explicit config bypasses ~/.vnstatrc; existing history is never removed.
+if ! vnstat --config /etc/vnstat.conf --dbiflist 1 2>/dev/null | grep -Fxq -- "$iface"; then
+    vnstat --config /etc/vnstat.conf --add -i "$iface"
+fi
+systemctl enable vnstat.service
+systemctl restart vnstat.service
+systemctl is-active --quiet vnstat.service || die 'vnStat 未能启动。'
+systemd-analyze verify /etc/systemd/system/serverman-traffic.service /etc/systemd/system/serverman-traffic.timer
+systemctl enable serverman-traffic.timer
+printf '已配置：网卡 %s，阈值 %s GB，当月补充 %s GB，Bark 地址已保存（不显示）。\n' "$iface" "$threshold" "$offset"
+printf '监控即将启用；若已有统计加补充值达到阈值，首次检测就会关机。\n'
+printf '后续管理：系统设置 → 每月流量监控 → 查看状态 / 测试通知 / 停用。\n'
+printf '日志：sudo journalctl -u serverman-traffic.service -n 30 --no-pager\n'
+printf '配置备份：%s\n' "$backup"
+# Release before starting the timer so its first invocation can acquire the lock.
+flock -u 9
+systemctl start serverman-traffic.timer
+committed=1
+
+
+)
+
+traffic_monitor_menu() {
+    local choice status
+    while true; do
+        printf '\n========== 每月流量监控（vnStat + Bark） ==========\n'
+        printf '  1. 安装 / 修改流量阈值和 Bark 地址\n'
+        printf '  2. 查看监控状态和本月流量\n'
+        printf '  3. 发送 Bark 测试通知（不关机）\n'
+        printf '  4. 停用流量关机监控\n'
+        printf '  0. 返回系统设置\n'
+        read -r -p '请选择 [0-4]：' choice || return 0
+        case $choice in
+            1) traffic_monitor install ;;
+            2) traffic_monitor status ;;
+            3) traffic_monitor test-bark ;;
+            4) traffic_monitor disable ;;
+            0) return 0 ;;
+            *) error '无效选项，请输入 0-4。'; continue ;;
+        esac
+        status=$?
+        (( status == 0 )) || error "流量监控操作未完成（退出码：$status），请查看上述原因。"
+    done
+}
+
 # ==================== 两级菜单入口 ====================
 
 show_menu() {
@@ -542,8 +933,9 @@ system_settings_menu() {
         printf '  5. 创建用户\n'
         printf '  6. iptables 端口管理（IPv4）\n'
         printf '  7. 清理系统\n'
+        printf '  8. 每月流量监控（vnStat + Bark）\n'
         printf '  0. 返回主菜单\n'
-        read -r -p '请选择 [0-7]：' choice || return 0
+        read -r -p '请选择 [0-8]：' choice || return 0
         case $choice in
             1) update_system ;;
             2) open_bbr ;;
@@ -552,8 +944,9 @@ system_settings_menu() {
             5) create_user ;;
             6) iptables_ports_menu ;;
             7) info '清理系统功能暂未实现（保留原菜单入口）。' ;;
+            8) traffic_monitor_menu ;;
             0) return 0 ;;
-            *) error '无效选项，请输入 0-7。'; continue ;;
+            *) error '无效选项，请输入 0-8。'; continue ;;
         esac
         status=$?
         (( status == 0 )) || error "本次操作未完成（退出码：$status），已返回系统设置。"
@@ -615,3 +1008,4 @@ main() {
 if [[ -z ${BASH_SOURCE[0]:-} || ${BASH_SOURCE[0]:-} == "$0" ]]; then
     main "$@"
 fi
+
