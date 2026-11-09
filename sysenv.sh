@@ -540,6 +540,14 @@ if [[ ${1:-install} != install && ( ! -f $runner || ! -f $config ) ]]; then
     die '尚未安装流量监控，请先选择“安装 / 修改流量阈值和 Bark 地址”。'
 fi
 case ${1:-install} in
+    enable)
+        grep -Fq 'BOOT_GRACE_SECONDS = 300' "$runner" ||
+            die '已安装的是旧版监控，请先选 1 更新监控程序；更新后可使用此入口直接启用。'
+        printf '将使用已保存的配置启用监控；开机不足 5 分钟时暂不关机，之后超阈值会自动关机。\n'
+        systemctl enable --now vnstat.service
+        systemctl enable --now serverman-traffic.timer
+        printf '已启用流量关机监控，无需重新填写配置。\n'
+        exit ;;
     status)
         printf '定时器启用状态：'; systemctl is-enabled serverman-traffic.timer || true
         printf '定时器运行状态：'; systemctl is-active serverman-traffic.timer || true
@@ -657,6 +665,7 @@ import datetime as dt
 import decimal
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -670,6 +679,8 @@ import urllib.request
 CONFIG = Path('/etc/serverman-traffic/config.json')
 LOCK = Path('/run/serverman-traffic.lock')
 STATE = Path('/var/lib/serverman-traffic')
+UPTIME = Path('/proc/uptime')
+BOOT_GRACE_SECONDS = 300
 VNSTAT_CONFIG = '/etc/vnstat.conf'
 UTC = dt.timezone.utc
 
@@ -752,6 +763,14 @@ def gb(value):
     return f'{decimal.Decimal(value) / 1000000000:.3f}'
 
 
+def boot_grace_remaining():
+    # Kernel uptime survives service/timer restarts and does not depend on wall time.
+    uptime = float(UPTIME.read_text().split()[0])
+    if not math.isfinite(uptime) or uptime < 0:
+        raise ValueError('invalid uptime')
+    return max(0, math.ceil(BOOT_GRACE_SECONDS - uptime))
+
+
 def main(command='check'):
     cfg = load_config()
     if command == 'test-bark':
@@ -764,6 +783,11 @@ def main(command='check'):
         except BlockingIOError:
             print('另一个安装或检测任务正在执行。', flush=True)
             return 1
+        remaining = boot_grace_remaining()
+        if remaining:
+            print(f'开机维护期：还剩 {remaining} 秒，期间不会自动关机。', flush=True)
+            if command == 'check':
+                return 0
         now = dt.datetime.now(UTC)
         used = usage(cfg, now)
         month = now.strftime('%Y-%m')
@@ -854,7 +878,7 @@ cat > /etc/systemd/system/serverman-traffic.timer <<'UNIT'
 Description=Check monthly traffic every 10 seconds
 
 [Timer]
-OnBootSec=15s
+OnBootSec=5min
 OnUnitInactiveSec=10s
 AccuracySec=1s
 RandomizedDelaySec=0
@@ -874,7 +898,7 @@ systemctl is-active --quiet vnstat.service || die 'vnStat 未能启动。'
 systemd-analyze verify /etc/systemd/system/serverman-traffic.service /etc/systemd/system/serverman-traffic.timer
 systemctl enable serverman-traffic.timer
 printf '已配置：网卡 %s，阈值 %s GB，当月补充 %s GB，Bark 地址已保存（不显示）。\n' "$iface" "$threshold" "$offset"
-printf '监控即将启用；若已有统计加补充值达到阈值，首次检测就会关机。\n'
+printf '监控即将启用；每次开机前 5 分钟不自动关机，维护期结束后超阈值会关机。\n'
 printf '后续管理：系统设置 → 每月流量监控 → 查看状态 / 测试通知 / 停用。\n'
 printf '日志：sudo journalctl -u serverman-traffic.service -n 30 --no-pager\n'
 printf '配置备份：%s\n' "$backup"
@@ -894,15 +918,17 @@ traffic_monitor_menu() {
         printf '  2. 查看监控状态和本月流量\n'
         printf '  3. 发送 Bark 测试通知（不关机）\n'
         printf '  4. 停用流量关机监控\n'
+        printf '  5. 启用流量关机监控（使用已保存配置）\n'
         printf '  0. 返回系统设置\n'
-        read -r -p '请选择 [0-4]：' choice || return 0
+        read -r -p '请选择 [0-5]：' choice || return 0
         case $choice in
             1) traffic_monitor install ;;
             2) traffic_monitor status ;;
             3) traffic_monitor test-bark ;;
             4) traffic_monitor disable ;;
+            5) traffic_monitor enable ;;
             0) return 0 ;;
-            *) error '无效选项，请输入 0-4。'; continue ;;
+            *) error '无效选项，请输入 0-5。'; continue ;;
         esac
         status=$?
         (( status == 0 )) || error "流量监控操作未完成（退出码：$status），请查看上述原因。"

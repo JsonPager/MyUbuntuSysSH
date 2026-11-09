@@ -35,9 +35,12 @@ class GuardTests(unittest.TestCase):
                                      rx=400_000_000_000, tx=499_999_999_999)]))])
         self.config_file = base / 'config.json'
         self.config_file.write_text(json.dumps(self.cfg))
+        uptime_file = base / 'uptime'
+        uptime_file.write_text('600.00 0.00')
         patches = [patch.object(guard, 'CONFIG', self.config_file),
                    patch.object(guard, 'LOCK', base / 'guard.lock'),
                    patch.object(guard, 'STATE', base / 'state'),
+                   patch.object(guard, 'UPTIME', uptime_file),
                    patch.object(guard, 'notify', return_value=True),
                    patch.object(guard.dt, 'datetime', wraps=dt.datetime),
                    patch.object(guard, 'run', side_effect=self.fake_run)]
@@ -101,6 +104,49 @@ class GuardTests(unittest.TestCase):
         self.execute()
         self.notify_mock.assert_called_once()
         self.assertEqual(len(self.shutdown_calls()), 2)
+
+    def test_boot_grace_prevents_shutdown_even_above_threshold(self):
+        self.at_threshold()
+        for uptime in ('0.00', '15.00', '299.99'):
+            with self.subTest(uptime=uptime):
+                guard.UPTIME.write_text(uptime + ' 0.00')
+                self.assertEqual(self.execute(), 0)
+        self.notify_mock.assert_not_called()
+        self.run_mock.assert_not_called()
+
+    def test_grace_expires_at_five_minutes(self):
+        self.at_threshold()
+        guard.UPTIME.write_text('300.00 0.00')
+        self.execute()
+        self.assertEqual(len(self.shutdown_calls()), 1)
+
+    def test_reboot_gets_grace_again_with_prior_notification_marker(self):
+        self.at_threshold()
+        self.execute()
+        guard.UPTIME.write_text('20.00 0.00')
+        self.execute()
+        self.assertEqual(len(self.shutdown_calls()), 1)
+        guard.UPTIME.write_text('301.00 0.00')
+        self.execute()
+        self.assertEqual(len(self.shutdown_calls()), 2)
+        self.notify_mock.assert_called_once()
+
+    def test_status_reports_remaining_grace(self):
+        guard.UPTIME.write_text('200.50 0.00')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(guard.main('status'), 0)
+        self.assertIn('还剩 100 秒', output.getvalue())
+        self.assertFalse(self.shutdown_calls())
+
+    def test_unknown_uptime_does_not_trigger_shutdown(self):
+        self.at_threshold()
+        for value in ('bad', 'nan', '-1', 'inf'):
+            with self.subTest(value=value):
+                guard.UPTIME.write_text(value)
+                with self.assertRaises(ValueError):
+                    self.execute()
+        self.assertFalse(self.shutdown_calls())
 
     def test_status_above_threshold_is_read_only(self):
         self.at_threshold()
@@ -178,8 +224,8 @@ class MenuTests(unittest.TestCase):
 
     def test_monitor_menu_dispatches_all_operations(self):
         output = self.shell('traffic_monitor() { printf "CALLED:%s\\n" "$1"; }; '
-                            'traffic_monitor_menu', '1\n2\n3\n4\n0\n')
-        for command in ('install', 'status', 'test-bark', 'disable'):
+                            'traffic_monitor_menu', '1\n2\n3\n4\n5\n0\n')
+        for command in ('install', 'status', 'test-bark', 'disable', 'enable'):
             self.assertIn('CALLED:' + command, output)
 
     def test_system_settings_routes_to_monitor_menu(self):
