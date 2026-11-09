@@ -10,6 +10,8 @@ umask 077
 CONFIG=/etc/ssh/sshd_config
 BACKUP_ROOT=/var/backups/setup-ssh-user
 backup='' work='' username='' password='' confirmation='' service='' original_user=''
+sshd_options=()
+service_needs_start=0
 created=0 changed=0 committed=0 reload_attempted=0
 sudoers_file='' sudoers_stage=''
 
@@ -30,7 +32,7 @@ cleanup() {
         fi
         if (( changed )); then
             # Only this file was changed; never overwrite unrelated Include files.
-            if cp -a -- "$backup/ssh/sshd_config" "$CONFIG" && /usr/sbin/sshd -t -f "$CONFIG"; then
+            if cp -a -- "$backup/ssh/sshd_config" "$CONFIG" && /usr/sbin/sshd "${sshd_options[@]}" -t -f "$CONFIG"; then
                 info "已恢复 SSH 配置：$backup/ssh/sshd_config"
                 if (( reload_attempted )); then
                     if ! systemctl reload "$service" || ! systemctl is-active --quiet "$service"; then
@@ -66,7 +68,7 @@ trap 'exit 129' HUP
 
 [[ $EUID -eq 0 ]] || die '请使用 sudo bash setup-ssh-user.sh 或以 root 执行。'
 [[ -t 0 && -t 1 ]] || die '必须在交互式终端执行；不支持管道输入密码。'
-for tool in getent useradd userdel usermod chpasswd passwd systemctl flock cmp cp mktemp awk id stat visudo runuser ln chmod; do
+for tool in getent useradd userdel usermod chpasswd passwd systemctl flock cmp cp mktemp awk id stat visudo runuser ln chmod install; do
     command -v "$tool" >/dev/null || die "缺少命令：$tool"
 done
 [[ -x /usr/sbin/sshd && -x /bin/bash ]] || die '需要 OpenSSH Server 和 /bin/bash。'
@@ -78,16 +80,33 @@ done
 [[ ${ID:-} == ubuntu || ${ID:-} == debian ]] || die '当前仅支持 Ubuntu / Debian。'
 exec 9>/run/setup-ssh-user.lock
 flock -n 9 || die '另一个初始化脚本正在执行。'
-/usr/sbin/sshd -t -f "$CONFIG" || die '原 SSH 配置语法错误；未修改。'
+# /run is volatile; socket activation can leave this directory absent until ssh starts.
+[[ ! -L /run/sshd ]] || die '/run/sshd 是符号链接，请人工核查。'
+if [[ ! -e /run/sshd ]]; then install -d -o root -g root -m 0755 /run/sshd; fi
 for candidate in ssh.service sshd.service; do
     if systemctl is-active --quiet "$candidate"; then service=$candidate; break; fi
 done
-[[ -n $service ]] || die '没有运行中的 systemd SSH 服务；不自动启动或重启。'
+if [[ -z $service ]]; then
+    for candidate in ssh sshd; do
+        if systemctl is-active --quiet "$candidate.socket"; then
+            service="$candidate.service"
+            service_needs_start=1
+            break
+        fi
+    done
+fi
+[[ -n $service ]] || die '没有运行中的 systemd SSH 服务或 SSH socket；未修改。'
 exec_start=$(systemctl show "$service" -p ExecStart --value)
 start_args=${exec_start#*argv[]=}
 start_args=${start_args%% ;*}
+# Exact allowlist for the standard AWS EC2 Instance Connect drop-in. Do not eval
+# systemd output or permit arbitrary -o/-f/-p overrides.
+aws_start='/usr/sbin/sshd -D -o AuthorizedKeysCommand /usr/share/ec2-instance-connect/eic_run_authorized_keys %u %f -o AuthorizedKeysCommandUser ec2-instance-connect'
 case $start_args in
     '/usr/sbin/sshd -D'|'/usr/sbin/sshd -D $SSHD_OPTS'|'/usr/sbin/sshd -D -e') ;;
+    "$aws_start"|"$aws_start "'$SSHD_OPTS')
+        sshd_options=(-o 'AuthorizedKeysCommand /usr/share/ec2-instance-connect/eic_run_authorized_keys %u %f'
+                      -o 'AuthorizedKeysCommandUser ec2-instance-connect') ;;
     *) die '不支持自定义 SSH 启动参数（包括 -f / -o / -p），请人工核对。' ;;
 esac
 environment_files=$(systemctl show "$service" -p EnvironmentFiles --value)
@@ -106,6 +125,12 @@ if [[ -f /etc/default/ssh ]] && ! awk '
 fi
 environment=$(systemctl show "$service" -p Environment --value)
 [[ $environment != *SSHD_OPTS=* ]] || die 'systemd Environment 定义了 SSHD_OPTS，请人工核对。'
+/usr/sbin/sshd "${sshd_options[@]}" -t -f "$CONFIG" || die '按服务启动参数检查原 SSH 配置失败；未修改。'
+if (( service_needs_start )); then
+    info "检测到 SSH socket 按需启动，正在启动 $service（保留 socket 配置）。"
+    systemctl start "$service" || die 'SSH 服务启动失败；未创建用户或修改 SSH 配置。'
+    systemctl is-active --quiet "$service" || die 'SSH 服务启动后未处于运行状态；未创建用户。'
+fi
 
 read -r -p '新用户名（小写字母开头，最多 32 字符）：' username
 [[ $username =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || die '用户名格式不合法。'
@@ -220,7 +245,7 @@ connection_source=
 if ! detect_ssh_connection; then
     # 控制台 / 脱离原终端时没有可用客户端。取 sshd 配置中的监听端口，
     # 使用回环测试地址作静态比对，绝不把它冒充为真实外部连接。
-    configured_port=$(/usr/sbin/sshd -T -f "$CONFIG" | awk '$1=="port" && !found {print $2; found=1}') ||
+    configured_port=$(/usr/sbin/sshd "${sshd_options[@]}" -T -f "$CONFIG" | awk '$1=="port" && !found {print $2; found=1}') ||
         die '无法读取 SSH 监听配置；未修改配置。'
     [[ $configured_port =~ ^[0-9]{1,5}$ ]] || die '无法从 sshd 配置中读取监听端口；未修改配置。'
     connection="127.0.0.1 65535 127.0.0.1 $configured_port"
@@ -256,7 +281,7 @@ getent passwd "$original_user" >/dev/null || die '自动识别的原有登录用
 
 # UseDNS=no 时 sshd 使用地址；启用 DNS 时核对反向名称的正向解析。
 remote_host=$remote_addr
-use_dns=$(/usr/sbin/sshd -T -f "$CONFIG" | awk '$1=="usedns" {print $2}')
+use_dns=$(/usr/sbin/sshd "${sshd_options[@]}" -T -f "$CONFIG" | awk '$1=="usedns" {print $2}')
 if [[ $use_dns == yes ]]; then
     resolved_host=$(getent hosts "$remote_addr" | awk 'NR==1 {print $2}') || resolved_host=
     if [[ -n $resolved_host ]]; then
@@ -270,7 +295,7 @@ fi
 [[ $remote_host =~ ^[a-zA-Z0-9_.:-]+$ ]] || die '自动识别的客户端主机名不合法。'
 context="addr=$remote_addr,host=$remote_host,laddr=$local_addr,lport=$local_port"
 info "核验来源：$connection_source；$remote_addr → $local_addr:$local_port；原有用户：$original_user"
-effective() { /usr/sbin/sshd -T -f "$CONFIG" -C "user=$1,$context"; }
+effective() { /usr/sbin/sshd "${sshd_options[@]}" -T -f "$CONFIG" -C "user=$1,$context"; }
 value() { awk -v k="$1" '$1==k {$1=""; sub(/^ /, ""); print; exit}' "$2"; }
 
 work=$(mktemp -d /run/setup-ssh-user.XXXXXXXX)
@@ -280,7 +305,7 @@ while IFS=: read -r existing _; do
     effective "$existing" > "$work/before.$existing"
 done < "$work/passwd.before"
 [[ $(value pubkeyauthentication "$work/before.$original_user") == yes ]] || die '原用户在指定连接条件下未开启公钥认证，请先核对。'
-/usr/sbin/sshd -T -f "$CONFIG" > "$work/global.before"
+/usr/sbin/sshd "${sshd_options[@]}" -T -f "$CONFIG" > "$work/global.before"
 
 read -r -s -p '新用户密码：' password; printf '\n'
 read -r -s -p '再次输入密码：' confirmation; printf '\n'
@@ -377,7 +402,7 @@ Match User $username
 Match all
 # END setup-ssh-user: $username
 EOF
-/usr/sbin/sshd -t -f "$CONFIG" || die '修改后的 SSH 配置语法错误。'
+/usr/sbin/sshd "${sshd_options[@]}" -t -f "$CONFIG" || die '修改后的 SSH 配置语法错误。'
 effective "$username" > "$work/new.after"
 [[ $(value passwordauthentication "$work/new.after") == yes ]] || die '已有 Match 规则优先，密码认证未生效；不会覆盖原规则。'
 check_access "$work/new.after"
@@ -385,7 +410,7 @@ check_access "$work/new.after"
 awk '$1!="passwordauthentication"' "$work/new.before" > "$work/new.filtered.before"
 awk '$1!="passwordauthentication"' "$work/new.after" > "$work/new.filtered.after"
 cmp -s "$work/new.filtered.before" "$work/new.filtered.after" || die '新用户的其他安全配置发生变化。'
-/usr/sbin/sshd -T -f "$CONFIG" > "$work/global.after"
+/usr/sbin/sshd "${sshd_options[@]}" -T -f "$CONFIG" > "$work/global.after"
 cmp -s "$work/global.before" "$work/global.after" || die '全局 SSH 配置发生变化。'
 count=0
 while IFS=: read -r existing _; do
